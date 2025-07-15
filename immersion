@@ -1,0 +1,13 @@
+#!/usr/bin/env zsh
+
+script_dir=${0:a:h}
+config_home=${XDG_CONFIG_HOME:-${HOME}/.config}
+
+sudo ln -sf ${script_dir}/barista /usr/local/bin/barista
+sudo ln -sf ${script_dir}/cold-brew /usr/local/bin/cold-brew
+
+sudo ln -sf ${script_dir}/bloom /usr/local/bin/bloom
+mkdir -p ${config_home}/bloom
+ln -sf ${script_dir}/bloom.yml ${config_home}/bloom/config.yml
+
+print "☕ Coffee machine ready to extract"

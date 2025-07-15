@@ -1,0 +1,146 @@
+#!/usr/bin/env zsh
+
+print_usage() {
+    print "Usage: bloom [project_directory]"
+    print ""
+    print "Extracts the perfect development environment in a fresh tmux session."
+    print ""
+    print "Arguments:"
+    print "  project_directory    Directory to open (optional, defaults to current directory)"
+    print ""
+    print "Configuration:"
+    print "  Global config: \$XDG_CONFIG_HOME/bloom/config.yml (commonly ~/.config/bloom/config.yml)"
+    print "  Project config: <project>/.bloom.yml (overrides global config)"
+}
+
+error_exit() {
+    print -u2 "Error: $1"
+    exit 1
+}
+
+check_dependencies() {
+    command -v tmux &>/dev/null || error_exit "tmux is not installed"
+    command -v yq &>/dev/null || error_exit "yq is not installed"
+}
+
+get_config_file() {
+    local project_config=$1
+    local global_config=$2
+    
+    if [[ -f ${project_config} ]]; then
+        echo ${project_config}
+    elif [[ -f ${global_config} ]]; then
+        echo ${global_config}
+    fi
+}
+
+get_selected_window() {
+    local config_file=$1
+    local default_window=${2:-zsh}
+    
+    if [[ -z ${config_file} ]] || ! command -v yq &>/dev/null; then
+        echo ${default_window}
+        return
+    fi
+    
+    local selected=$(yq eval '.select // "zsh"' ${config_file} 2>/dev/null)
+    if [[ -z ${selected} || ${selected} == "null" ]]; then
+        echo ${default_window}
+    else
+        echo ${selected}
+    fi
+}
+
+parse_tools() {
+    local config_file=$1
+
+    local tool_count=$(yq eval '.tools | length' ${config_file} 2>/dev/null)
+
+    if [[ $? -ne 0 || ${tool_count} -eq 0 ]]; then
+        return 1
+    fi
+
+    typeset -ga tool_names
+    typeset -ga tool_commands
+    tool_names=()
+    tool_commands=()
+
+    for i in {0..$((tool_count - 1))}; do
+        local name=$(yq eval ".tools[${i}].name" ${config_file})
+        local command=$(yq eval ".tools[${i}].command" ${config_file})
+
+        if [[ ${name} == "null" || ${command} == "null" ]]; then
+            print -u2 "Warning: Invalid tool configuration at index ${i} - skipping"
+            continue
+        fi
+
+        tool_names+=("${name}")
+        tool_commands+=("${command}")
+    done
+
+    [[ ${#tool_names[@]} -gt 0 ]]
+}
+
+create_session() {
+    local session_name=$1
+    local project_dir=$2
+    local project_config=$3
+    local global_config=$4
+    
+    tmux new-session -d -s ${session_name} -n zsh -c ${project_dir} zsh
+    
+    local config_file=$(get_config_file ${project_config} ${global_config})
+    
+    if [[ -z ${config_file} ]]; then
+        print "No configuration file found - opening zsh"
+        print "Create ${global_config} or ${project_config} to customize tools"
+        return 0
+    fi
+    
+    if ! parse_tools ${config_file}; then
+        print "No tools defined in ${config_file} - opening zsh only"
+        return 0
+    fi
+    
+    for i in {1..${#tool_names[@]}}; do
+        tmux new-window -t "${session_name}:" \
+            -n "${tool_names[i]}" \
+            -c ${project_dir} \
+            ${tool_commands[i]}
+    done
+}
+
+main() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        print_usage
+        exit 0
+    fi
+    
+    local project_dir=${1:-$(pwd)}
+    local session_name=$(basename -- ${project_dir} | sed 's/[^a-zA-Z0-9_]/_/g')
+    local project_config="${project_dir}/.bloom.yml"
+    local global_config="${XDG_CONFIG_HOME:-$HOME/.config}/bloom/config.yml"
+    
+    [[ -d ${project_dir} ]] || error_exit "Directory '${project_dir}' does not exist"
+    
+    check_dependencies
+    
+    if tmux has-session -t ${session_name} 2>/dev/null; then
+        local config_file=$(get_config_file ${project_config} ${global_config})
+        local selected_window=$(get_selected_window ${config_file})
+        tmux select-window -t "${session_name}:${selected_window}" 2>/dev/null
+        tmux attach-session -t ${session_name}
+        exit 0
+    fi
+    
+    create_session ${session_name} ${project_dir} ${project_config} ${global_config}
+    
+    local config_file=$(get_config_file ${project_config} ${global_config})
+    local selected_window=$(get_selected_window ${config_file})
+    
+    tmux select-window -t "${session_name}:${selected_window}" 2>/dev/null || \
+        tmux select-window -t "${session_name}:zsh"
+    tmux attach-session -t ${session_name}
+}
+
+main "$@"

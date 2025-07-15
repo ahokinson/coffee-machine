@@ -1,0 +1,8 @@
+#!/usr/bin/env zsh
+
+if tmux has-session -t barista 2>/dev/null; then
+    echo "Already serving"
+else
+    tmux new-session -d -s barista -n ollama "ollama serve"
+    echo "Started serving"
+fi
